@@ -1,0 +1,61 @@
+rules_version = '2';
+
+// Open Media — Firestore security rules
+//
+// Model: the browser never writes to Firestore. The Next.js API route
+// (/api/contact) validates the submission, then signs in as a dedicated
+// "contact writer" user and creates the document. These rules make that the
+// ONLY way a document can be created, and nobody can read, update or delete
+// submissions through the client SDKs. Review submissions in the Firebase
+// console (or with the Admin SDK, which bypasses rules).
+//
+// SETUP: replace REPLACE_WITH_CONTACT_WRITER_UID with the UID of the user you
+// created for FIREBASE_CONTACT_WRITER_EMAIL (Authentication → Users).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isContactWriter() {
+      return request.auth != null
+        && request.auth.uid == "REPLACE_WITH_CONTACT_WRITER_UID";
+    }
+
+    function isShortString(v, min, max) {
+      return v is string && v.size() >= min && v.size() <= max;
+    }
+
+    function isValidContactRequest(d) {
+      return d.keys().hasOnly([
+          'name', 'businessName', 'email', 'phone', 'businessType', 'service',
+          'projectDescription', 'budget', 'kvkkConsent', 'createdAt', 'status'
+        ])
+        && d.keys().hasAll([
+          'name', 'businessName', 'email', 'businessType', 'service',
+          'projectDescription', 'kvkkConsent', 'createdAt', 'status'
+        ])
+        && isShortString(d.name, 2, 80)
+        && isShortString(d.businessName, 2, 120)
+        && isShortString(d.email, 5, 160)
+        && d.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+        && (!('phone' in d) || d.phone == null || isShortString(d.phone, 7, 20))
+        && d.businessType in ['pazaryeri', 'e-ticaret', 'moda-tekstil', 'kozmetik-guzellik', 'yerel-isletme', 'diger']
+        && d.service in ['ai-urun-gorselleri', 'ai-reklam-kreatifleri', 'sosyal-medya-icerikleri', 'birden-fazla']
+        && isShortString(d.projectDescription, 20, 2000)
+        && (!('budget' in d) || d.budget == null
+            || d.budget in ['belirsiz', '0-10k', '10k-25k', '25k-50k', '50k+'])
+        && d.kvkkConsent == true
+        && d.createdAt == request.time
+        && d.status == 'new';
+    }
+
+    match /contact_requests/{requestId} {
+      allow create: if isContactWriter() && isValidContactRequest(request.resource.data);
+      allow read, update, delete: if false;
+    }
+
+    // Everything else is closed by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
